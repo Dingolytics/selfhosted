@@ -1,5 +1,5 @@
-Dingolytics
-===========
+Self-hosted installation of Dingolytics
+=======================================
 
 **Dingolytics** is an open source data collection and analytics platform.
 
@@ -29,26 +29,32 @@ More detailed instructions are below.
 1. Clone the repository
 
 ```bash
-git clone https://github.com/Dingolytics/dingolytics-selfhosted.git
+git clone https://github.com/Dingolytics/selfhosted.git
 ```
 
-2. Create a `.env` file with the credentials in the root directory of the repository. You can use the `env.example` as a template.
+2. Create a `.env` file with the credentials in the root directory of the repository.
 
-3. Adjust the `docker-compose.yml` file if necessary. For example, uncomment the `caddy` service if you want to use Caddy as a reverse proxy.
 
-4. Run the following command to start the platform.
+```bash
+./genenv.sh
+```
+
+You can also use the `env.example` as a template.
+
+3. Adjust `.env` and `docker-compose.yml` files if necessary.
+
+4. Run the following command to start services:
 
 ```bash
 docker-compose up --build -d
 ```
 
-5. Open the Web UI in your browser. The default URL is `http://localhost:8001`.
+5. Open the Web UI in your browser to set up. The default URL is `http://localhost:8100/setup`
 
 
 ## Feedback
 
-If you have any questions or feedback, please feel free to open an issue on GitHub or contact us via Telegram of Slack channels.
+If you have any questions or feedback, please feel free to post on GitHub:
 
-- Issues: https://github.com/Dingolytics/dingolytics
-- Telegram: ...
-- Slack: ...
+- [Ideas / UX](https://github.com/orgs/Dingolytics/discussions/categories/ideas-ux)
+- [Issues](https://github.com/orgs/Dingolytics/discussions/categories/issues)

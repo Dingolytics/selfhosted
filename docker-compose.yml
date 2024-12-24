@@ -1,22 +1,23 @@
-version: '3.9'
+x-base-service: &base-service
+  image: dingolytics/dingolytics-backend:$APPLICATION_SERVER_TAG
+  restart: unless-stopped
+  volumes:
+    - vector-etc:/etc/vector
 
-x-caddy-environment: &caddy-environment
-  WEB_HOST: $WEB_HOST
-  WEB_HOST_LETSENCRYPT_EMAIL: $WEB_HOST_LETSENCRYPT_EMAIL
-
-x-app-environment: &app-environment
-  LOG_LEVEL: "INFO"
-  DATASOURCE_SECRET_KEY: $DATASOURCE_SECRET_KEY
+x-base-environment: &base-environment
+  LOG_LEVEL: INFO
+  REDIS_URL: redis://redis:6379/0
+  HUEY_URL: redis://redis:6379/0
+  SQLALCHEMY_DATABASE_URI: postgresql://dingolytics:$POSTGRES_PASSWORD@postgres/dingolytics
+  CSRF_ENFORCED: "true"
+  GUNICORN_TIMEOUT: 60
   SECRET_KEY: $SECRET_KEY
-  SQLALCHEMY_DATABASE_URI: postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@postgres/$POSTGRES_DB
-  RATELIMIT_ENABLED: "false"
-  ENFORCE_CSRF: $ENFORCE_CSRF
-  REDIS_URL: "redis://redis:6379/0"
-  CLICKHOUSE_DB: $CLICKHOUSE_DB
-  CLICKHOUSE_USER: $CLICKHOUSE_USER
+  DATASOURCE_SECRET_KEY: $DATASOURCE_SECRET_KEY
+  CLICKHOUSE_DB: dingolytics
+  CLICKHOUSE_USER: dingolytics
   CLICKHOUSE_PASSWORD: $CLICKHOUSE_PASSWORD
-  VECTOR_INGEST_URL: "https://${WEB_HOST}"
-  VECTOR_CONFIG_PATH: "/home/redash/etc/vector/vector.toml"
+  VECTOR_CONFIG_PATH: /etc/vector/vector.yaml
+  VECTOR_INGEST_URL: $VECTOR_INGEST_URL
 
 services:
   caddy:
@@ -24,123 +25,109 @@ services:
     build:
       context: ./etc/caddy
     environment:
-      <<: *caddy-environment
+      WEB_HOST: "$WEB_HOST"
+      WEB_HOST_LETSENCRYPT_EMAIL: "$WEB_HOST_LETSENCRYPT_EMAIL"
     ports:
-      # Ports for local development:
-      - "127.0.0.1:8001:8001"
+      # Ports for local testing:
+      - "127.0.0.1:8100:8100"
       # Ports for production:
       # - "80:80"
       # - "443:443"
       # - "443:443/udp"
+    cap_add:
+      - NET_ADMIN
     volumes:
-      - caddy-data:/data
-      - caddy-config:/config
-      - caddy-www:/var/www/dingolytics:ro
+      - htdocs_data:/var/htdocs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  vector:
+    image: timberio/vector:0.42.X-alpine
+    restart: unless-stopped
+    environment:
+      VECTOR_WATCH_CONFIG: /etc/vector/vector.yaml
+    volumes:
+      - vector-data:/var/lib/vector
+      - vector-etc:/etc/vector:ro
+    command: --watch-config
+
+  postgres:
+    image: postgres:15.10-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dingolytics
+      POSTGRES_USER: dingolytics
+      POSTGRES_PASSWORD: $POSTGRES_PASSWORD
+    volumes:
+      - pgdata15:/var/lib/postgresql/data
+
+  redis:
+    image: bitnami/keydb:6.3.4-debian-12-r6
+    restart: unless-stopped
+    environment:
+      KEYDB_AOF_ENABLED: "yes"
+      ALLOW_EMPTY_PASSWORD: "yes"
+    volumes:
+      - keydb:/bitnami/keydb/data
 
   clickhouse:
     restart: unless-stopped
     build:
       context: ./etc/clickhouse
-    environment:
-      CLICKHOUSE_DB: $CLICKHOUSE_DB
-      CLICKHOUSE_USER: $CLICKHOUSE_USER
-      CLICKHOUSE_PASSWORD: $CLICKHOUSE_PASSWORD
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-      CLICKHOUSE_INIT_TIMEOUT: 60
     cap_add:
       - NET_ADMIN
       - SYS_NICE
       - IPC_LOCK
+    environment:
+      CLICKHOUSE_DB: dingolytics
+      CLICKHOUSE_USER: dingolytics
+      CLICKHOUSE_PASSWORD: $CLICKHOUSE_PASSWORD
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_INIT_TIMEOUT: 60
     volumes:
       - clickhouse-data:/var/lib/clickhouse
       - clickhouse-logs:/val/log/clickhouse-server
 
-  redis:
-    image: redis:7.2.4-alpine3.19
-    restart: unless-stopped
+  frontend:
+    image: dingolytics/dingolytics:$APPLICATION_FRONTEND_TAG
     volumes:
-      - redis-data:/data
-
-  postgres:
-    image: postgres:15.2-alpine
-    restart: unless-stopped
-    environment:
-      PGDATA: /var/data/pgdata
-      POSTGRES_DB: $POSTGRES_DB
-      POSTGRES_USER: $POSTGRES_USER
-      POSTGRES_PASSWORD: $POSTGRES_PASSWORD
-    volumes:
-      - pg-data-15:/var/lib/postgresql/data/pgdata
-
-  vector:
-    image: timberio/vector:0.30.X-alpine
-    restart: unless-stopped
-    environment:
-      VECTOR_WATCH_CONFIG: /etc/vector/vector.toml
-    volumes:
-      - vector-data:/var/lib/vector
-      # - vector-etc:/etc/vector:ro
-      - ./var/vector:/etc/vector:ro
-    # For debugging purposes open ports locally:
-    # ports:
-    #   - "127.0.0.1:8180:8180"
-    command: --watch-config
+      - htdocs_data:/var/www/dingolytics:ro
 
   app-server:
-    image: dingolytics/dingolytics:$DINGOLYTICS_IMAGE_TAG
-    restart: unless-stopped
+    <<: *base-service
     depends_on:
+      - clickhouse
       - postgres
       - redis
-    # For debugging purposes open ports locally:
-    ports:
-      - "127.0.0.1:5000:5000"
-      - "127.0.0.1:5678:5678"
+    # ports:
+    #   - 127.0.0.1:$SERVER_PORT:5000
     environment:
-      <<: *app-environment
-      GUNICORN_TIMEOUT: 60
-      GUNICORN_WEB_WORKERS: 4
-      PYTHONUNBUFFERED: 0
-    volumes:
-      - caddy-www:/var/www/dingolytics:ro
-      # - vector-etc:/home/redash/etc/vector
-      - ./var/vector:/home/redash/etc/vector
-    command: server
-
-  app-scheduler:
-    image: dingolytics/dingolytics:$DINGOLYTICS_IMAGE_TAG
-    restart: unless-stopped
-    environment:
-      <<: *app-environment
-      QUEUES: "celery"
-      WORKERS_COUNT: 1
-    command: scheduler
+      <<: *base-environment
+    command: run_server
 
   app-worker:
-    image: dingolytics/dingolytics:$DINGOLYTICS_IMAGE_TAG
-    restart: unless-stopped
+    <<: *base-service
+    depends_on:
+      - app-server
     environment:
-      <<: *app-environment
-      QUEUES: "scheduled_queries,schemas"
-      WORKERS_COUNT: 1
-    command: worker
+      <<: *base-environment
+    command: run_worker
 
-  app-adhoc-worker:
-    image: dingolytics/dingolytics:$DINGOLYTICS_IMAGE_TAG
-    restart: unless-stopped
+  app-periodic:
+    <<: *base-service
+    depends_on:
+      - app-server
     environment:
-      <<: *app-environment
-      QUEUES: "queries"
-      WORKERS_COUNT: 2
-    command: worker
+      <<: *base-environment
+    command: run_periodic
 
 volumes:
-  pg-data-15:
-  caddy-config:
-  caddy-data:
-  caddy-www:
-  redis-data:
   clickhouse-data:
   clickhouse-logs:
   vector-data:
-  # vector-etc:
+  vector-etc:
+  pgdata15:
+  keydb:
+  caddy_data:
+  caddy_config:
+  htdocs_data:
